@@ -1,0 +1,277 @@
+---
+title: "MP01 - Exploring California Flight Data"
+author: "Dylan Thomas"
+format: pdf
+editor: visual
+---
+
+```{r setup, echo = F}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = F}
+## optional code chunk;
+## gives shortcut for boldface colored text,
+## able to be rendered in both PDF and HTML
+
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+```
+
+```{r, message = F, warning = F, echo=F}
+library(ottr)        # for checking test cases (i.e. autograding)
+library(pander)      # for nicer-looking formatting of dataframe outputs
+library(reshape2)    # for 'melting' data frames
+library(tidyverse)   # for graphs, data wrangling, etc.
+```
+
+**Start by combining all 12 months of data into a single data frame.**
+
+```{r, echo = F, fig.keep='none', warning=FALSE}
+filenames <- c("data/CA_Flights_Jan.csv", "data/CA_Flights_Feb.csv", "data/CA_Flights_Mar.csv",
+               "data/CA_Flights_Apr.csv","data/CA_Flights_May.csv", "data/CA_Flights_Jun.csv", 
+               "data/CA_Flights_Jul.csv", "data/CA_Flights_Aug.csv","data/CA_Flights_Sept.csv",
+               "data/CA_Flights_Oct.csv", "data/CA_Flights_Nov.csv", "data/CA_Flights_Dec.csv")
+flights <- lapply(filenames, function(x) read_csv(x, show_col_types = F))
+combined_flights <- flights %>% bind_rows()
+```
+
+**What are the Observational Units and Variables? How are missing values encoded?**
+
+The observational unit in these datasets would consist of the flights taken in each month. There are 1,267,353 flights total in the datasets. Variables for this set include the year, month, and day of the flight, it includes the airline that ran the flight, it includes the origin and destination airport of the flight. It also has time information, such as the scheduled departure and arrival, the actual departure and arrival times, how much delay there was in those times, and the scheduled and real elapsed time of the flight. Any missing datapoints are stored as NA.
+
+Now that we have this data in a dataset, we can combine it with the airport information and reformat/rename some of the variables.
+
+```{r, echo=FALSE,fig.keep='none'}
+Airport_Info <- read_csv("data/Airport_Info.csv", show_col_types = F)
+flights_with_airports <- left_join(
+  combined_flights, Airport_Info, 
+  by = join_by("ORIGIN" == "ARPT_ID")
+) %>%
+  rename(
+    "ORIGIN_ARPT_NAME" = "ARPT_NAME", "lat_origin" = "y","lon_origin" = "x"
+  ) %>%
+  left_join(
+    Airport_Info,
+    by = join_by("DEST" == "ARPT_ID")
+  ) %>%
+  rename(
+    "DEST_ARPT_NAME" = "ARPT_NAME", "lat_dest" = "y",  "lon_dest" = "x"
+  )
+
+flights_with_airports <- flights_with_airports %>%
+  mutate(MONTH = factor(
+    MONTH, levels = c(1:12), labels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",         "Nov", "Dec"), ordered = T)
+  )
+
+```
+
+Now that the data has been organized and combined properly, we can continue on to drawing conclusions and manipulating the data more.
+
+**How many airports have flights that connect with Santa Barbara? Name the airports, and then display them on a map.**
+
+```{r, echo=FALSE}
+flights_SBA <- flights_with_airports %>%
+  filter(ORIGIN == "SBA" | DEST == "SBA")
+flights_SBA$ORIGIN_ARPT_NAME %>% unique()
+flights_SBA$DEST_ARPT_NAME %>% unique()
+```
+
+Using the unique function, we can find that the airports that service flights to or from SBA include Dallas-Fort Worth, Phoenix, Seattle-Tacoma, LAX, San Fransisco, Denver, Harry Reid (las vegas), Oakland, Sacramento, and Portland. Now we can use the coordinate data we have to map these locations.
+
+```{r, echo=FALSE}
+states <- map_data("state")
+
+ggplot(mapping = aes(x= c(flights_SBA$lon_dest, flights_SBA$lon_origin),
+                     y= c(flights_SBA$lat_dest, flights_SBA$lat_origin))) +
+  geom_polygon(data = states,
+               aes(x = long, y = lat, group = group),
+               fill = "grey90",
+               colour = "grey50") +
+  coord_quickmap() +
+  theme_minimal() +
+  geom_point() + 
+  geom_text(mapping = aes(x= -122, y= 34.5), label = "SBA") +
+  labs(x = "Longitude", y= "Latitude", title = "Locations of all airports connection to SBA (with SBA marked)")
+```
+
+This map shows the location of all airports who have sent or recieved a flight from Santa Barbara in 2023. Santa Barbara Airport is also marked and labelled as SBA. Now we can also use this data to produce a line graph to display how busy (how many flights are coming in or going out) SBA is depending on the month.
+
+**Generate a line graph that visualizes the total number of monthly flights that route through SBA**
+
+```{r, echo=FALSE}
+
+flights_SBA %>%
+  group_by(MONTH)%>%
+  summarise(total_flights = n()) %>%
+  ggplot(aes(x=MONTH, y= total_flights)) +
+  geom_line(aes(group = 1)) +
+  geom_point() +
+  labs(x = "Month", y= "Total flights in and out of SBA", title = "Total flights in and out of SBA by month")
+
+```
+
+This line graph shows us that every month falls between 1050 to 1350 flights, with february being the minumum and october being the maximum. The trend that pops out is that summer and fall months are clearly higher traffic than the winter and spring months. One possible explanation (that could be further explored) for this is increased tourism during those months.
+
+**Reproduce your graphic from above, but facet based on whether the flights are arriving or departing from SBA. Are there any months where the number of flights landing in SBA differs from the number of flights leaving SBA? Use the graph and a table to answer.**
+
+```{r, echo=FALSE}
+arriving_flights_total <- flights_SBA %>%
+  filter(DEST == "SBA") %>%
+  group_by(MONTH) %>%
+  summarise(count = n())
+
+departing_flights_total <- flights_SBA%>%
+  filter(ORIGIN == "SBA") %>%
+  group_by(MONTH) %>%
+  summarise(count = n())
+  
+arrivals_and_departures_total <- bind_rows(
+  mutate(arriving_flights_total, Direction = "Arriving"),
+  mutate(departing_flights_total, Direction = "Departing")
+)  
+arrivals_and_departures_total %>% 
+  group_by(MONTH) %>%
+  ggplot(aes(x= MONTH, y= count)) +
+  facet_wrap("Direction") +
+  geom_line(aes(group = 1)) +
+  geom_point() + 
+  labs(x= "Month", y= "Number of Flights at SBA",
+       title = "Comparing arriving and departing flights at SBA over 2023")
+  
+departing_flights_total
+arriving_flights_total
+
+```
+
+As we can see from this graph and table, the two numbers are generally the same (as would be expected, the plane has to take off if it lands), but some exceptions can be seen in June and October (where there are more arrivals than departures) and in July and November (where there are more departures than arrivals). One possible hypothesis for this phenomenom is that if a plane arrives on the last day of the month, and then doesn't take off until the next day, it would cause the first month to have extra arrivals, and the second month to have extra departures. This tracks with our observation that june/july and october/november are the months with this discrepancy. Overall, there is no noticeable difference between the arriving and departing flights.
+
+**Generate a doubly-grouped side-by-side boxplot that displays the distribution of flight durations for flights departing from and arriving in SBA. Use this graph to describe if there are any differences in the distribution of flight durations to and from SBA.**
+
+```{r, echo=FALSE, warning=FALSE}
+arriving_flights <- flights_SBA %>%
+  filter(DEST == "SBA") %>%
+  group_by(MONTH)
+departing_flights <- flights_SBA%>%
+  filter(ORIGIN == "SBA") %>%
+  group_by(MONTH)
+
+arrivals_and_departures <- bind_rows(
+  mutate(arriving_flights, Direction = "Arriving"),
+  mutate(departing_flights, Direction = "Departing")
+)
+
+condensed_airports <- arrivals_and_departures %>%
+  mutate(airport = if_else(ORIGIN=="SBA", DEST, ORIGIN))
+
+condensed_airports %>%
+  ggplot(aes(x= airport, y= ACTUAL_ELAPSED_TIME, fill = Direction)) +
+  geom_boxplot(staplewidth = 0.5) +
+  theme_minimal(base_size = 12) +
+  labs(x= "Airport", y= "Length of flight (in minutes)", 
+       title = "Boxplot of flight length by airport and by direction")
+```
+
+As this boxplot shows, while generally the time of a flight inbound or outbound is pretty similar, there are some noteable airports where there is a visual difference, specifically Denver and Dallas, both of which are longer coming to Santa Barbara compared to leaving. These are also the flights that travel the most distance east/west, so I would be interested to investigate if that has something to do with this difference.
+
+**Generate a boxplot of departure delays across airlines.**
+
+```{r, echo=FALSE, warning=FALSE}
+condensed_airports %>%
+  ggplot(aes(x= OP_UNIQUE_CARRIER, y= DEP_DELAY)) +
+  geom_boxplot(staplewidth = 0.5) +
+  theme_minimal(base_size = 12) +
+  ylim(-50, 150) +
+  labs(x= "Airline", y= "Departure Delays in Minutes", 
+       title = "Departure Delays by Airline, in Flights Departing from or Departing to SBA")
+```
+
+As can be seen in this box and whisker plot, flights generally departed before their scheduled departure time, no matter the airline. We can also see however, that it is very rare for a plane to leave more than 20-30 minutes before scheduled departure time, but the range of delays can go for hours in the other direction. The box plot also tells us that airlines MQ and OO (my research says that those are envoy air and skywest respectively) have the densest interquartile range, meaning that they are usually the closest to the scheduled departure time. AA and UA (American and United Airlines) on the other hand have the largest IQR, meaning their times fall on a bigger range, most likely due to more delays, given that they lie higher on the y-axis as well.
+
+**Generate a doubly-grouped boxplot that displays delay times, and color based on whether the delay is a departure or arrival delay.**
+
+```{r, echo=FALSE, warning=FALSE}
+condensed_airports %>%
+  ggplot(aes(x= OP_UNIQUE_CARRIER, y= DEP_DELAY, fill = Direction)) +
+  geom_boxplot(staplewidth = 0.5) +
+  theme_minimal(base_size = 12) +
+  ylim(-50, 150) +
+  labs(x= "Airline", y= "Departure Delays in Minutes", 
+       title = "Departure Delays by Airline, in Flights Departing from or Departing to SBA")
+```
+
+This plot is the same as the last one, but split to represent whether the flight was arriving at SBA or departing. Some interesting quirks we can see here is that American is much more accurate with their scheduled time when leaving SBA rather than other airports. There also seems to be a trend across all airlines that flights at SBA leave earlier than flights heading to SBA.
+
+**For flights departing SBA, generate a plot to find if there is an association between the scheduled departure time and the length of delay. This plot should also display any potential changes based on the destination.**
+
+```{r, echo=F, warning=FALSE}
+condensed_airports %>%
+  filter(Direction == "Departing") %>%
+  ggplot(aes(x=CRS_DEP_TIME, y=DEP_DELAY)) +
+  geom_point(size = 0.1) + 
+  ylim(-15, 250) +
+  facet_wrap("airport") +
+  theme_minimal() +
+  labs(x = "Time of Scheduled Departure", y= "Delay in Minutes", 
+       title = "Flight delay by time of scheduled departure and airport, for flights leaving SBA")
+```
+
+By splitting this graph by destination airport, we can see this interesting timeline of when certain flight routes are flown most often, and we can see which ones get delayed the most. Flights to Phoenix, Oakland, and Denver seem to always get delayed no matter what time of day they are scheduled for, but looking at a route like SMF (Sacramento), and it seems that morning/midday flights get delayed much more than afternoon/evening ones do. Las vegas also has an interesting gap in its schedule, flights in the middle of the day seem to rarely get delayed more than about an hour or so, but morning/evening flights get delayed for much longer times. Overall, however, there doesn't seem to be much of a relationship over all the routes and time of departure, each route has a very different relationship.
+
+**Now, broaden the scope beyond just flights through SBA. What does the distribution of departure times look like?**
+
+```{r, echo = F, warning=FALSE}
+flights_with_airports %>%
+  group_by(DEP_TIME) %>%
+  na.omit() %>%
+  summarise(count = n())%>%
+  ggplot(aes(x= DEP_TIME, y = count)) +
+  geom_point(size = 0.4) +
+  theme_minimal() +
+  labs(x= "Time of Departure", y= "Number of Departures Nationwide", 
+       title = "Number of departures by time of day")
+```
+
+Here we have the number of departures at each minute over the course of 2023. What immediately sticks out is that there is almost no departures early in the morning (about 1-6 AM). There are also massive spikes throughout the morning, around the hour/half hour marks, which would line up with how flights are normally scheduled to depart on round numbers.There are 2 more dips at night, along side some short peaks representing red-eye flights leaving very late at night.
+
+**What does the distribution of arrival times look like?**
+
+```{r, echo=FALSE, warning=FALSE}
+flights_with_airports %>%
+  group_by(ARR_TIME) %>%
+  na.omit() %>%
+  summarise(count = n())%>%
+  ggplot(aes(x= ARR_TIME, y = count)) +
+  geom_point(size = 0.4) +
+  theme_minimal() +
+  labs(x= "Time of Arrival", y= "Number of Arrivals Nationwide", 
+       title = "Number of Arrivals by time of day")
+```
+
+This graph makes sense as a transformation of the departures graph, with the biggest peaks shifted 4-8 hours later, which would line up with the length of a domestic flight. There is still a major trough in the early morning, and the spikes are a bit more compact, with less sharp outliers at specific minute marks.I also notice that in the first morning spike, the datapoints are in an almost perfect (very steep) upwards slope, with rarely one minute having less arrivals than the one before it.
+
+**Are there months that have higher/lower median delays (both arrival and departure)**
+
+```{r, echo=FALSE, warning=FALSE}
+delays_by_month <- flights_with_airports %>%
+  subset(select = c(MONTH, DEP_DELAY, ARR_DELAY))
+
+delays_by_month_median <- delays_by_month %>% 
+  group_by(MONTH) %>%
+  na.omit() %>%
+  summarise(departure_delay_median = median(DEP_DELAY), arrival_delay_median = median(ARR_DELAY))
+
+print(delays_by_month_median)
+
+```
+
+Keeping this in the table format makes the information easiest to compare, as the numbers are relatively similar over time, so the better comparision to make is between departures and arrivals. We can see that departures always have a median of leaving on time or early, there is never a month in which arrivals are not earlier than departures. In fact, in every single month, arrivals are 2-6 minutes earlier than departures. I would like to further explore how this may have changed over time (from previous years) as I would assume predictive technology has gotten better at knowing how long a flight will take. Something that stands out to me in this table is that the end of the year (sep-dec) is the earliest months in both departures and arrivals. It doesn't seem to be a seasonal phenomenon, at least from January and February.
+
+**We know that a newark-seattle direct flight exists, why is it not present in this dataset?**
+
+For the Newark-Seattle direct flight, according to the parameters of the data that we started with, we only have flights that either left from or went to California based airports. This means that while a Newark-Seattle flight exists, it is not within the scope of this dataset.
